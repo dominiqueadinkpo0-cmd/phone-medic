@@ -1,0 +1,394 @@
+#!/usr/bin/env python3
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+CYAN = "\033[96m"
+NC = "\033[0m"
+
+BRAND_GUIDES = {
+    "samsung": "Paramètres > A propos du telephone > Informations logicielles > toucher 7x 'Numero de version' > Retour > Options de developpeur > activer 'Debogage USB'",
+    "xiaomi": "Parametres > A propos du telephone > toucher 7x 'Version MIUI/HyperOS' > Parametres supplementaires > Options developpeur > activer 'Debogage USB' (compte Mi requis sur certains modeles)",
+    "huawei": "Parametres > A propos du telephone > toucher 7x 'Numero de build' > Systeme et mises a jour > Options developpeur > activer 'Debogage USB'",
+    "oppo": "Parametres > A propos du telephone > Version > toucher 7x 'Numero de build' > Parametres supplementaires > Options developpeur > 'Debogage USB'",
+    "vivo": "Parametres > A propos du telephone > toucher 7x 'Numero de build' (ou 'Version logicielle') > Options developpeur > 'Debogage USB'",
+    "oneplus": "Parametres > A propos de l'appareil > toucher 7x 'Numero de build' > Systeme > Options developpeur > 'Debogage USB'",
+    "motorola": "Parametres > A propos du telephone > toucher 7x 'Numero de build' > Systeme > Options developpeur > 'Debogage USB'",
+    "google": "Parametres > A propos du telephone > toucher 7x 'Numero de build' > Systeme > Options developpeur > 'Debogage USB'",
+}
+
+FIRMWARE_LINKS = {
+    "samsung": "SamFw Tool / Odin + firmware sur samfw.com ou sammobile.com (mode Download : Vol- + Vol+ + brancher USB)",
+    "xiaomi": "MiFlash + firmware officiel sur xiaomifirmwareupdater.com (fastboot ROM .tgz)",
+    "google": "https://developers.google.com/android/images (factory images officielles Pixel)",
+    "oneplus": "https://www.oneplus.com/support/softwareupgrade ( Oxygen Updater / MSM Download Tool)",
+    "motorola": "https://mirrors.lolinet.com/firmware/moto/ (Lenovo Rescue and Smart Assistant)",
+    "nokia": "Nokia Online Update Tool ou reparation via HMD",
+}
+
+
+def log(msg):
+    print(f"{GREEN}[+]{NC} {msg}")
+
+
+def warn(msg):
+    print(f"{YELLOW}[!]{NC} {msg}")
+
+
+def err(msg):
+    print(f"{RED}[x]{NC} {msg}")
+
+
+def title(msg):
+    print(f"\n{CYAN}--- {msg} ---{NC}")
+
+
+def run(args, timeout=30):
+    try:
+        return subprocess.run(
+            args, capture_output=True, text=True, timeout=timeout
+        ).stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return ""
+
+
+def tool_ok(name):
+    return shutil.which(name) is not None
+
+
+def check_tools():
+    missing = [t for t in ("adb", "fastboot") if not tool_ok(t)]
+    if missing:
+        err(f"Outils manquants : {', '.join(missing)}")
+        print("  Windows  : winget install Google.PlatformTools   (ou dl.google.com/android/repository/platform-tools)")
+        print("  macOS    : brew install --cask android-platform-tools")
+        print("  Linux    : sudo apt install adb fastboot | dnf | pacman")
+        print("  Termux   : pkg install android-tools")
+        return False
+    return True
+
+
+def adb(*args):
+    return run(["adb", *args])
+
+
+def fastboot(*args):
+    return run(["fastboot", *args], timeout=60)
+
+
+def wait_device():
+    print("\nBranchez le telephone en USB et attendez...")
+    for _ in range(60):
+        state = adb_state()
+        if state:
+            log(f"Appareil detecte en mode '{state}'")
+            return True
+        time.sleep(1)
+        print(".", end="", flush=True)
+    print()
+    err("Aucun appareil detecte apres 60s.")
+    diagnose_failure()
+    return False
+
+
+def adb_state():
+    out = adb("get-state").lower()
+    for s in ("device", "recovery", "sideload", "bootloader", "unauthorized", "offline"):
+        if s in out:
+            return s
+    return None
+
+
+def getprop(prop):
+    val = adb("-s", serial(), "shell", "getprop", prop) if serial() else adb("shell", "getprop", prop)
+    return val.replace("\r", "").strip()
+
+
+_SERIAL_CACHE = {"v": None}
+
+
+def serial():
+    if _SERIAL_CACHE["v"] is None:
+        devs = [l.split("\t")[0] for l in adb("devices").splitlines()[1:] if "\tdevice" in l]
+        _SERIAL_CACHE["v"] = devs[0] if len(devs) == 1 else ""
+    return _SERIAL_CACHE["v"]
+
+
+def diagnose_failure():
+    print("""
+CAUSES POSSIBLES :
+ 1. Telephone completement ETEINT ou mort      -> AUCUN logiciel ne peut agir.
+    Reessayez apres 30 min de charge sur un chargeur secteur, cable different,
+    ou faites reparer la batterie/connecteur. Le debogage USB ne peut JAMAIS
+    etre active sur un OS qui ne demarre pas.
+ 2. Debogage USB jamais active                 -> suivez l'assistant (menu 2)
+    des que le telephone redemarre, ou utilisez un souris OTG pour naviguer
+    si le tactile est casse (adaptateur USB-C/USB -> souris).
+ 3. Fenetre 'Autoriser le debogage ?' pas validee -> rebranchez, validez sur
+    l'ecran du telephone (cochez 'Toujours autoriser').
+""")
+
+
+def diagnose():
+    title("Diagnostic appareil")
+    state = adb_state()
+    if not state:
+        err("Aucun appareil ADB. Essayez le mode bootloader (menu 3).")
+        diagnose_failure()
+        return
+    if state in ("unauthorized", "offline"):
+        warn(f"Appareil {state} : validez l'autorisation RSA sur son ecran, puis retestez.")
+        return
+    info = {
+        "Modele": ["ro.product.brand", "ro.product.model"],
+        "Android": ["ro.build.version.release"],
+        "Patch securite": ["ro.build.version.security_patch"],
+        "Chiffrement": ["ro.crypto.state"],
+        "Bootloader verifie": ["ro.boot.verifiedbootstate"],
+    }
+    for label, props in info.items():
+        vals = [getprop(p) for p in props]
+        print(f"  {label:20}: {' '.join(v for v in vals if v)}")
+    batt = adb("shell", "dumpsys", "battery")
+    level = next((l.split(":")[1].strip() for l in batt.splitlines() if "level" in l), "?")
+    print(f"  {'Batterie':20}: {level}%")
+    dev_opt = adb("shell", "settings", "get", "global", "development_settings_enabled")
+    dbg = adb("shell", "settings", "get", "global", "adb_enabled")
+    print(f"  {'Options developpeur':20}: {'ACTIVEES' if dev_opt == '1' else 'DESACTIVEES'}")
+    print(f"  {'Debogage USB':20}: {'ACTIF' if dbg == '1' else 'INACTIF'}")
+
+
+def guide_devmode():
+    title("Assistant Mode developpeur + Debogage USB")
+    brand = ""
+    if adb_state() == "device":
+        brand = getprop("ro.product.brand").lower()
+        print(f"Marque detectee : {brand or '?'}")
+    guide = BRAND_GUIDES.get(brand)
+    print("\nETAPES SUR LE TELEPHONE :")
+    print(f"  {guide or BRAND_GUIDES['google']}")
+    print("\nENSUITE :")
+    print("  1. Activez aussi 'Deverrouillage OEM' (si present) : necessaire pour flasher.")
+    print("  2. Branchez en USB, une fenetre 'Autoriser le debogage USB ?' apparait.")
+    print("  3. Cochez 'Toujours autoriser' puis OK.")
+    if input("\nTerminé ? Tester la connexion maintenant ? [o/N] ").strip().lower() == "o":
+        _SERIAL_CACHE["v"] = None
+        if adb_state() == "device":
+            log("Connexion ADB operationnelle !")
+            diagnose()
+        else:
+            err("Pas encore connecte. Verifiez l'autorisation sur l'ecran du telephone.")
+
+
+def recovery_menu():
+    title("Recuperation appareil semi-brique")
+    if not wait_device():
+        return
+    while True:
+        print("""
+ [1] Redemarrer en mode bootloader/fastboot
+ [2] Etat du bootloader (deverrouille ?)
+ [3] DEVERROUILLER le bootloader  (EFFACE TOUTES LES DONNEES !)
+ [4] Flasher une partition avec une image officielle
+ [5] Reinitialisation usine via fastboot
+ [6] Firmware officiel pour votre marque (liens)
+ [7] Redemarrer normalement
+ [0] Retour""")
+        c = input("Choix : ").strip()
+        if c == "1":
+            adb("reboot", "bootloader")
+            log("Attente du mode bootloader...")
+            time.sleep(5)
+            print(fastboot("devices") or "(fastboot ne voit rien : installez les pilotes USB de votre marque)")
+        elif c == "2":
+            out = fastboot("flashing", "get_unlock_ability") + fastboot("oem", "device-info")
+            print(out or "Reponse vide : certains constructeurs bloquent ces commandes.")
+        elif c == "3":
+            warn("ATTENTION : le deverrouillage efface TOUTES les donnees et peut annuler la garantie.")
+            warn("Ne faites ca que sur VOTRE appareil.")
+            if input("Confirmer (tapez OUI) : ") == "OUI":
+                print(fastboot("flashing", "unlock") or fastboot("oem", "unlock"))
+                warn("Validez la confirmation SUR L'ECRAN DU TELEPHONE s'il en affiche une.")
+        elif c == "4":
+            part = input("Partition a flasher (boot/system/recovery/vendor/dtbo...) : ").strip()
+            img = input("Chemin du fichier image officiel (.img) : ").strip().strip('"')
+            if part and img and os.path.exists(img):
+                print(fastboot("flash", part, img))
+                log("Flash termine." if "okay" in str(fastboot("flash", part, img)).lower() else "")
+            else:
+                err("Fichier introuvable ou partition vide.")
+        elif c == "5":
+            if input("Effacer toutes les donnees ? [o/N] ").strip().lower() == "o":
+                fastboot("-w")
+                log("Wipe effectue.")
+        elif c == "6":
+            b = getprop("ro.product.brand").lower() if adb_state() == "bootloader" else ""
+            print(FIRMWARE_LINKS.get(b, "Cherchez '<marque> firmware officiel' + outil de flash dedie (Odin/MiFlash/RSA)."))
+        elif c == "7":
+            fastboot("reboot") or adb("reboot")
+            return
+        elif c == "0":
+            return
+
+
+def sim_menu():
+    title("Carte SIM / operateur")
+    if adb_state() != "device":
+        warn("Telephone non accessible via ADB. Les fonctions SIM exigent que l'OS tourne.")
+        return
+    imei = adb("shell", "dumpsys", "iphonesubinfo")
+    print(f"  IMEI (si accessible) : {imei.replace(chr(13), '') or 'non expose par Android (normal sans root)'}")
+    locked = [l for l in adb("shell", "getprop").splitlines() if any(k in l.lower() for k in ("simlock", "networklock", "sim_lock"))]
+    print(f"  Props simlock        : {locked or 'aucune info standardisee (la detection fiable passe par l\'operateur)'}")
+    print("""
+COMMENT SAVOIR SI LE TELEPHONE EST VERROUILLE OPERATEUR ?
+  Inserez une SIM d'un AUTRE operateur :
+    - 'Reseau non disponible' / code demande -> verrouille.
+    - Il capte -> deja debloque.
+
+DEBLOCAGE OFFICIEL (legitime et souvent gratuit) :
+  1. Notez votre IMEI : composez *#06# sur le telephone.
+  2. Si achete chez un operateur : demandez le deblocage a CET operateur.
+     Obligatoire et gratuit dans l'UE apres 3-6 mois (reglement (UE) 2015/2120).
+     USA : T-Mobile/Metro via leur app ; AT&T sur att.com ; Verizon = non verrouille depuis 2020ish.
+  3. Si importe : demandez au vendeur/constructeur avec preuve d'achat.
+  4. Entrez le code recu quand une SIM etrangere est inseree.
+
+ESIM :
+  - L'activation eSIM se fait UNIQUEMENT via l'app/Qr de votre operateur
+    (Parametres > Reseau > Ajouter un operateur / eSIM). Aucune app tierce
+    ne peut installer un profil eSIM : c'est verrouille par securite.
+
+LECTEUR SIM CASSE (carte non detectee sur aucun telephone) :
+  -> Panne MATERIELLE. Reparation du lecteur necessaire, aucun logiciel n'y change rien.
+""")
+
+
+def dead_phone_info():
+    print(f"""
+{CYAN}=== TELEPHONE ETEINT / NE DEMARRE PLUS : CE QUI EST POSSIBLE ==={NC}
+ 1. Chargez 30 min minimum sur SECTEUR (pas USB PC), essayez un autre cable/chargeur.
+ 2. Forcer le redemarrage : Vol- + Power 10s (Samsung : Vol+ + Vol- + Power).
+ 3. Ca redemarre ? -> revenez au menu 1 ou 2.
+ 4. Ca vibre mais ecran noir ? -> le telephone FONCTIONNE : branchez-le,
+    ce logiciel peut agir (menu 1/3), et une souris OTG remplace le tactile.
+ 5. Rien du tout ? -> panne materielle (batterie/connecteur/carte mere).
+    Seule une reparation physique permet l'acces. Aucun logiciel ne peut
+    'reveiller' un materiel mort : c'est une limite physique, pas de securite.
+
+{RED}NOTE LEGALE : n'utilisez ces outils que sur vos propres appareils ou avec
+l'autorisation explicite du propriétaire.{NC}
+""")
+
+
+def secondhand_menu():
+    title("Telephone d'occasion bloque FRP + SIM etrangere refusee")
+    print(f"""{CYAN}CE QUE VOUS VIVEZ{NC}
+ FRP (Factory Reset Protection) = le telephone exige le compte Google du
+ PRECEDENT proprietaire apres une reinitialisation. Verrouillage SIM =
+ limite a l'operateur americain qui l'a vendu (Metro, T-Mobile, AT&T...).
+
+{CYAN}LA SOLUTION REELLE POUR LE FRP (pas besoin de pirater){NC}
+ Le FRP se leve A DISTANCE depuis n'importe quel navigateur :
+  1. Ecrivez au vendeur (lettre type ci-dessous). C'est SON obligation.
+  2. Le compte Google d'origine retire l'appareil :
+     myaccount.google.com > Securite > Vos appareils > Se deconnecter.
+     OU : google.com/android/find > selectionner le TCL > retirer l'appareil.
+  3. Vous reconfigurez ensuite le telephone comme un neuf. 10 minutes.
+  4. Si le vendeur ne peut pas joindre l'acheteur d'origine -> il doit vous
+     REMBOURSER : il vend un produit inutilisable, c'est 'not as described'.
+  5. Recours : litige PayPal / garantie eBay Money Back / chargeback carte
+     bancaire en citant 'FRP locked device, seller unable to remove account'.
+
+{YELLOW}VERIFIEZ D'ABORD L'IMEI (composez *#06# sur l'ecran de configuration ou
+voyez la boite/etiquette) :{NC}
+ - imei.info          : infos + statut blacklist
+ - swappa.com/esn     : gratuit, dit si declare perdu/vole
+ - Si BLACKLISTE = probablement VOLE. Remboursement immediat exigé,
+   aucune procedure de deblocage n'est possible sur un IMEI noir.
+
+{CYAN}POUR LA SIM (verrouillage operateurs US — codes officiels par IMEI){NC}
+ T-Mobile  : t-mobile.com/app/unlock (exigences: 40 jours actif, prepaid ok)
+ Metro/MetroPCS : formulaire officiel deblocage (prepaid unlock policy)
+ AT&T      : att.com/deviceunlock (exigence: 6 mois de service)
+ Verizon   : codes 60 jours apres activation; politique stricte post-2021
+ Boost/Cricket/Straight Talk : pages 'device unlock' dediees
+ Autre voie LEGITIME : services de deblocage payants utilisant les bases
+ officielles (ex: doctorunlock, cellunlocker) ~10-25 USD, delai 1-5 jours.
+ ATTENTION : un IMEI blackliste ne sera JAMAIS debloquable.
+
+{CYAN}POURQUOI PAS UN LOGICIEL QUI CONTOURNE ?{NC}
+ - Le FRP se leve sur les serveurs Google, pas via un cable USB.
+   Un cable phone-a-phone ne change rien : l'OS verrouille n'execute rien
+   de confiance, et l'action legitime se fait dans un navigateur.
+ - Un contournement universel = outil de recyclage de telephones voles.
+
+{CYAN}LETTRE TYPE POUR LE VENDEUR (copiez-collez, remplissez les [crochets]){NC}
+------------------------------------------------------------
+Subject: TCL phone from order #{{NUMERO}} is FRP locked - please resolve
+
+Hi,
+
+I received the TCL phone (model {{MODELE}}, IMEI {{IMEI}}) I ordered on
+{{DATE}}. After factory reset it asks for the Google account previously
+synced on the device (Factory Reset Protection). It is also carrier
+locked to {{OPERATEUR}}, so no SIM works outside the US.
+
+As the reseller, you can fix this without shipping anything back:
+the original owner just needs to remove the device from their Google
+account at myaccount.google.com > Security > Your devices, or via
+google.com/android/find > Remove device. This takes them two minutes.
+
+If you cannot reach the original owner, please issue a full refund -
+an FRP-locked phone is unusable and not as described.
+
+Could you confirm within 3 business days? Thank you.
+{{Name}}
+------------------------------------------------------------
+
+{RED}NOTE : je ne fournis pas de contournement FRP. Ce parcours officiel est
+plus rapide et sans risque juridique.{NC}
+""")
+
+
+def main_menu():
+    while True:
+        print(f"""
+{CYAN}==================================================={NC}
+   PHONE-MEDIC - Diagnostic / DevMode / Recuperation / SIM
+{CYAN}==================================================={NC}
+ [1] Diagnostic de l'appareil connecte
+ [2] Assistant Mode developpeur + Debogage USB
+ [3] Recuperation semi-brique (fastboot / firmware)
+ [4] Carte SIM : verrouillage operateur, deblocage, eSIM
+ [5] Telephone eteint / mort : options reelles
+ [6] Occasion bloque FRP + SIM etrangere (votre cas TCL ?)
+ [0] Quitter""")
+        c = input("Choix : ").strip()
+        if c == "1":
+            diagnose()
+        elif c == "2":
+            guide_devmode()
+        elif c == "3":
+            recovery_menu()
+        elif c == "4":
+            sim_menu()
+        elif c == "5":
+            dead_phone_info()
+        elif c == "6":
+            secondhand_menu()
+        elif c == "0":
+            sys.exit(0)
+
+
+if __name__ == "__main__":
+    if os.name == "nt":
+        os.system("")
+    print(f"{GREEN}Phone-Medic v1.0 — multiplateforme (Windows/macOS/Linux/Termux){NC}")
+    if check_tools():
+        main_menu()
