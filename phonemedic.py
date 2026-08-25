@@ -11,6 +11,8 @@ RED = "\033[91m"
 CYAN = "\033[96m"
 NC = "\033[0m"
 
+IS_TERMUX = "com.termux" in os.environ.get("PREFIX", "")
+
 BRAND_GUIDES = {
     "samsung": "Paramètres > A propos du telephone > Informations logicielles > toucher 7x 'Numero de version' > Retour > Options de developpeur > activer 'Debogage USB'",
     "xiaomi": "Parametres > A propos du telephone > toucher 7x 'Version MIUI/HyperOS' > Parametres supplementaires > Options developpeur > activer 'Debogage USB' (compte Mi requis sur certains modeles)",
@@ -286,6 +288,122 @@ l'autorisation explicite du propriétaire.{NC}
 """)
 
 
+def phone_to_phone_menu():
+    title("Mode PHONE-A-PHONE (cet appareil = hôte, pas de PC)")
+    if not IS_TERMUX:
+        warn("Ce mode est conçu pour tourner SUR un téléphone via Termux.")
+        print("""
+INSTALLATION DE TERMUX SUR LE TELEPHONE HOTE :
+  1. Installez Termux (F-Droid de preference : f-droid.org/fr/packages/com.termux)
+  2. Dans Termux :
+       pkg update && pkg install python android-tools
+  3. Copiez ce script :  termux-setup-storage   (puis placez phonemedic.py
+     dans le stockage) et lancez :  python phonemedic.py
+  Le mode phone-a-phone apparaitra automatiquement au menu [7].
+""")
+        if input("Continuer quand même (PC/autre) ? [o/N] ").strip().lower() != "o":
+            return
+    while True:
+        print(f"""
+{CYAN}=== CONNECTION AU TELEPHONE CIBLE ==={NC}
+ [1] Wi-Fi / Hotspot (SANS root, recommandé)
+ [2] Câble USB + adaptateur OTG
+ [3] Etat de la connexion actuelle
+ [4] Déconnecter le téléphone cible
+ [0] Retour""")
+        c = input("Choix : ").strip()
+        if c == "1":
+            wifi_connect()
+        elif c == "2":
+            otg_connect()
+        elif c == "3":
+            _SERIAL_CACHE["v"] = None
+            st = adb_state()
+            devs = adb("devices")
+            print(devs or "(vide)")
+            log(f"Etat ADB : {st or 'aucune connexion'}")
+        elif c == "4":
+            tgt = input("Adresse ip:port a deconnecter : ").strip()
+            if tgt:
+                adb("disconnect", tgt)
+                log("Deconnecte.")
+        elif c == "0":
+            return
+
+
+def wifi_connect():
+    print(f"""
+{CYAN}PRINCIPE{NC} Les deux telephones partagent un reseau :
+  - Le telephone HOTE active son point d'acces mobile (hotspot), OU les deux
+    se connectent au meme Wi-Fi.
+  - Sur le telephone CIBLE (celui qu'on controle) :
+      Parametres > Options developpeur > 'Debogage sans fil' (Android 11+)
+      -> 'Associer l'appareil avec un code d'appairage'
+      -> notez : adresse IP:port d'appairage + code a 6 chiffres
+      -> notez aussi l'IP:port affiche sous 'Adresse IP et port' (pour la connexion)
+""")
+    pair_addr = input("IP:PORT d'appairage (vide si deja appaire/Android<11) : ").strip()
+    if pair_addr:
+        code = input("Code d'appairage 6 chiffres : ").strip()
+        out = run(["adb", "pair", pair_addr, code])
+        print(out or "(pas de reponse)")
+        if "success" in out.lower() or "ok" in out.lower():
+            log("Appairage reussi !")
+        else:
+            err("Appairage echoue : verifiez IP, port et code affiches sur le telephone cible.")
+            return
+    conn_addr = input("IP:PORT de connexion (affiche sur le telephone cible) : ").strip()
+    if not conn_addr:
+        err("Adresse requise.")
+        return
+    adb("connect", conn_addr)
+    time.sleep(1)
+    _SERIAL_CACHE["v"] = None
+    if adb_state() == "device":
+        log("Telephone cible CONNECTE ! Tous les menus (1-6) agissent maintenant dessus.")
+        diagnose()
+    else:
+        warn("Non connecte. Verifications :")
+        print("  - Les deux telephones sont-ils sur le MEME reseau ?")
+        print("  - 'Debogage sans fil' reste-t-il actif sur le cible ?")
+        print("  - Certains hotspots isolent les clients : desactivez 'isolation' ou testez en Wi-Fi partage.")
+
+
+def otg_connect():
+    print(f"""
+{CYAN}MATERIEL{NC}
+  Telephone HOTE (celui-ci) --adaptateur OTG--> cable USB --> Telephone CIBLE.
+  Adaptateurs : USB-C OTG femelle, ou Micro-USB OTG selon l'hote.
+
+{CYAN}SUR LE TELEPHONE CIBLE{NC}
+  Debogage USB ACTIVE + autorisation accordee (ecran fonctionnel ou souris OTG).
+  Pour fastboot : redemarrez le cible en bootloader AVANT de brancher.
+""")
+    if not IS_TERMUX and os.geteuid() != 0:
+        warn("Hors Termux/root, l'acces USB brut peut echouer.")
+    log("Detection...")
+    devs_out = run(["adb", "devices"])
+    print(devs_out or "(adb ne repond pas)")
+    fb_out = run(["fastboot", "devices"])
+    if fb_out:
+        print(fb_out)
+        log("Telephone cible detecte en mode FASTBOOT.")
+    low = (devs_out + fb_out).lower()
+    if "no permissions" in low or "insufficient permissions" in low:
+        err("Acces USB refuse par Android (cas classique SANS root).")
+        print("""
+SOLUTIONS DANS L'ORDRE :
+ 1. PREFERE : utilisez le mode Wi-Fi/hotspot (menu precedent) -> marche sans root.
+ 2. Si le telephone HOTE est ROOTE (Magisk/SuperSU) : accordez l'accès USB a
+    Termux ; adb/fastboot fonctionneront alors completement par câble.
+ 3. Branche/rebranche l'adaptateur OTG apres avoir lance Termux.""")
+    elif "\tdevice" in devs_out or fb_out:
+        log("Connexion OK ! Menus 1-6 utilisables directement.")
+        _SERIAL_CACHE["v"] = None
+    else:
+        warn("Rien detecte : verifiez adaptateur OTG, cable DATA (pas charge seul), et debogage USB du cible.")
+
+
 def secondhand_menu():
     title("Telephone d'occasion bloque FRP + SIM etrangere refusee")
     print(f"""{CYAN}CE QUE VOUS VIVEZ{NC}
@@ -368,6 +486,7 @@ def main_menu():
  [4] Carte SIM : verrouillage operateur, deblocage, eSIM
  [5] Telephone eteint / mort : options reelles
  [6] Occasion bloque FRP + SIM etrangere (votre cas TCL ?)
+ [7] PHONE-A-PHONE : controler un telephone depuis un autre (Termux)
  [0] Quitter""")
         c = input("Choix : ").strip()
         if c == "1":
@@ -382,6 +501,8 @@ def main_menu():
             dead_phone_info()
         elif c == "6":
             secondhand_menu()
+        elif c == "7":
+            phone_to_phone_menu()
         elif c == "0":
             sys.exit(0)
 
