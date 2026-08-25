@@ -25,21 +25,20 @@ python3 phonemedic.py
 | Réinitialisation usine fastboot | 3 | — |
 | Liens firmwares officiels selon marque (Odin, MiFlash, Pixel images…) | 3 | — |
 | Test verrouillage opérateur, procédure officielle de déblocage SIM, eSIM | 4 | OS démarré |
-| **Occasion bloqué FRP + SIM étrangère** : solution officielle (retrait à distance du compte Google par le vendeur), vérif IMEI/blacklist, codes de déblocage opérateurs US, lettre type en anglais pour le vendeur, recours PayPal/eBay | 6 | — |
-| **PHONE-A-PHONE** : contrôler un téléphone cible depuis un autre téléphone hôte, sans PC — via Wi-Fi/hotspot (`adb pair`/`connect`, sans root) ou câble USB + adaptateur OTG (root requis côté hôte pour le câble) | 7 | Hôte sous Termux |
+| **PHONE-A-PHONE** : contrôler un téléphone cible depuis un autre téléphone hôte, sans PC — via Wi-Fi/hotspot (`adb pair`/`connect`, sans root) ou câble USB + adaptateur OTG (root requis côté hôte pour le câble) | 6 | Hôte sous Termux |
 
-## Phone-to-Phone (menu 7)
+## Phone-to-Phone (menu 6)
 
 Le téléphone hôte installe [Termux](https://f-droid.org/fr/packages/com.termux) puis :
 
 ```bash
 pkg update && pkg install python android-tools
-python phonemedic.py   # menu [7]
+python phonemedic.py   # menu [6]
 ```
 
-- **Mode Wi-Fi (recommandé, sans root)** : hotspot activé sur l'hôte ; sur le cible, *Options développeur → Débogage sans fil* (Android 11+) → appairage par code 6 chiffres → `adb connect`. Tous les menus 1-6 agissent alors sur la cible.
+- **Mode Wi-Fi (recommandé, sans root)** : hotspot activé sur l'hôte ; sur le cible, *Options développeur → Débogage sans fil* (Android 11+) → appairage par code 6 chiffres → `adb connect`. Tous les menus 1-5 agissent alors sur la cible.
 - **Mode câble OTG** : hôte → adaptateur OTG → câble USB → cible. Fonctionne pleinement si l'hôte est **rooté** ; sans root, Android bloque l'accès USB brut et l'outil vous oriente automatiquement vers le mode Wi-Fi.
-- Limite inchangée : un téléphone verrouillé FRP au premier écran de configuration n'accepte **aucune** connexion ADB (USB ni Wi-Fi) — passez par le menu 6.
+- Limite inchangée : un téléphone verrouillé FRP au premier écran de configuration n'accepte **aucune** connexion ADB (USB ni Wi-Fi).
 
 ## Ce qu'AUCUN logiciel ne peut faire (limites physiques)
 

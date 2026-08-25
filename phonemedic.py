@@ -404,76 +404,6 @@ SOLUTIONS DANS L'ORDRE :
         warn("Rien detecte : verifiez adaptateur OTG, cable DATA (pas charge seul), et debogage USB du cible.")
 
 
-def secondhand_menu():
-    title("Telephone d'occasion bloque FRP + SIM etrangere refusee")
-    print(f"""{CYAN}CE QUE VOUS VIVEZ{NC}
- FRP (Factory Reset Protection) = le telephone exige le compte Google du
- PRECEDENT proprietaire apres une reinitialisation. Verrouillage SIM =
- limite a l'operateur americain qui l'a vendu (Metro, T-Mobile, AT&T...).
-
-{CYAN}LA SOLUTION REELLE POUR LE FRP (pas besoin de pirater){NC}
- Le FRP se leve A DISTANCE depuis n'importe quel navigateur :
-  1. Ecrivez au vendeur (lettre type ci-dessous). C'est SON obligation.
-  2. Le compte Google d'origine retire l'appareil :
-     myaccount.google.com > Securite > Vos appareils > Se deconnecter.
-     OU : google.com/android/find > selectionner le TCL > retirer l'appareil.
-  3. Vous reconfigurez ensuite le telephone comme un neuf. 10 minutes.
-  4. Si le vendeur ne peut pas joindre l'acheteur d'origine -> il doit vous
-     REMBOURSER : il vend un produit inutilisable, c'est 'not as described'.
-  5. Recours : litige PayPal / garantie eBay Money Back / chargeback carte
-     bancaire en citant 'FRP locked device, seller unable to remove account'.
-
-{YELLOW}VERIFIEZ D'ABORD L'IMEI (composez *#06# sur l'ecran de configuration ou
-voyez la boite/etiquette) :{NC}
- - imei.info          : infos + statut blacklist
- - swappa.com/esn     : gratuit, dit si declare perdu/vole
- - Si BLACKLISTE = probablement VOLE. Remboursement immediat exigé,
-   aucune procedure de deblocage n'est possible sur un IMEI noir.
-
-{CYAN}POUR LA SIM (verrouillage operateurs US — codes officiels par IMEI){NC}
- T-Mobile  : t-mobile.com/app/unlock (exigences: 40 jours actif, prepaid ok)
- Metro/MetroPCS : formulaire officiel deblocage (prepaid unlock policy)
- AT&T      : att.com/deviceunlock (exigence: 6 mois de service)
- Verizon   : codes 60 jours apres activation; politique stricte post-2021
- Boost/Cricket/Straight Talk : pages 'device unlock' dediees
- Autre voie LEGITIME : services de deblocage payants utilisant les bases
- officielles (ex: doctorunlock, cellunlocker) ~10-25 USD, delai 1-5 jours.
- ATTENTION : un IMEI blackliste ne sera JAMAIS debloquable.
-
-{CYAN}POURQUOI PAS UN LOGICIEL QUI CONTOURNE ?{NC}
- - Le FRP se leve sur les serveurs Google, pas via un cable USB.
-   Un cable phone-a-phone ne change rien : l'OS verrouille n'execute rien
-   de confiance, et l'action legitime se fait dans un navigateur.
- - Un contournement universel = outil de recyclage de telephones voles.
-
-{CYAN}LETTRE TYPE POUR LE VENDEUR (copiez-collez, remplissez les [crochets]){NC}
-------------------------------------------------------------
-Subject: TCL phone from order #{{NUMERO}} is FRP locked - please resolve
-
-Hi,
-
-I received the TCL phone (model {{MODELE}}, IMEI {{IMEI}}) I ordered on
-{{DATE}}. After factory reset it asks for the Google account previously
-synced on the device (Factory Reset Protection). It is also carrier
-locked to {{OPERATEUR}}, so no SIM works outside the US.
-
-As the reseller, you can fix this without shipping anything back:
-the original owner just needs to remove the device from their Google
-account at myaccount.google.com > Security > Your devices, or via
-google.com/android/find > Remove device. This takes them two minutes.
-
-If you cannot reach the original owner, please issue a full refund -
-an FRP-locked phone is unusable and not as described.
-
-Could you confirm within 3 business days? Thank you.
-{{Name}}
-------------------------------------------------------------
-
-{RED}NOTE : je ne fournis pas de contournement FRP. Ce parcours officiel est
-plus rapide et sans risque juridique.{NC}
-""")
-
-
 def main_menu():
     while True:
         print(f"""
@@ -485,8 +415,7 @@ def main_menu():
  [3] Recuperation semi-brique (fastboot / firmware)
  [4] Carte SIM : verrouillage operateur, deblocage, eSIM
  [5] Telephone eteint / mort : options reelles
- [6] Occasion bloque FRP + SIM etrangere (votre cas TCL ?)
- [7] PHONE-A-PHONE : controler un telephone depuis un autre (Termux)
+ [6] PHONE-A-PHONE : controler un telephone depuis un autre (Termux)
  [0] Quitter""")
         c = input("Choix : ").strip()
         if c == "1":
@@ -500,8 +429,6 @@ def main_menu():
         elif c == "5":
             dead_phone_info()
         elif c == "6":
-            secondhand_menu()
-        elif c == "7":
             phone_to_phone_menu()
         elif c == "0":
             sys.exit(0)
